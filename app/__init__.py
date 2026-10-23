@@ -1,0 +1,1 @@
+"""CloudShop application package."""

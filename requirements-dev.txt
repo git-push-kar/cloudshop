@@ -1,0 +1,13 @@
+-r requirements-api.txt
+
+pandas
+numpy
+scikit-learn
+xgboost
+joblib
+locust
+boto3
+psutil
+prometheus-client
+pytest
+httpx

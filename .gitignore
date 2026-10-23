@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.env
+
+# Generated artifacts and datasets (never commit secrets or large traces).
+results/*
+!results/.gitkeep
+dataset/processed/*
+!dataset/processed/.gitkeep
+dataset/raw/public_trace/*
+!dataset/raw/public_trace/.gitkeep
+dataset/raw/locust/*
+!dataset/raw/locust/.gitkeep
+ml/*.joblib
