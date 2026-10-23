@@ -6,7 +6,9 @@ scikit-learn
 xgboost
 joblib
 locust
-boto3
+azure-identity
+azure-mgmt-compute
+azure-mgmt-monitor
 psutil
 prometheus-client
 pytest

@@ -5,12 +5,14 @@ Build ONE stage at a time. Never start the next stage unless I say so.
 
 ## Environment
 - Windows 11, PowerShell, Python 3.11 venv at .venv
-- Cloud: AWS ap-south-1, one EC2 Amazon Linux VM running Docker
-- I run AWS Console steps and SSH/scp myself. Give me exact commands.
+- Cloud: Microsoft Azure, region Central India, one Linux VM running Docker,
+  inside a single resource group named rg-predictive-cloud
+- I run Azure Portal / az CLI steps and SSH/scp myself. Give me exact commands.
 
 ## Hard rules
 1. Never fabricate data. Missing fields stay NaN. Never fill with zeros or invented values.
-2. Never put AWS keys or secrets in code. Use env vars or IAM roles.
+2. Never put Azure credentials or secrets in code. Use env vars or managed
+   identities.
 3. Chronological train/test splits only. No shuffling. No future leakage in features.
 4. The ML model never executes cloud actions directly. Only controller/policy.py
    decides, with guardrails (min/max replicas, cooldowns, budget, stale-metric checks).
@@ -23,7 +25,10 @@ Build ONE stage at a time. Never start the next stage unless I say so.
    run and verify, (c) what "success" looks like, (d) what I must do manually.
 9. If something in PLAN.md is ambiguous or wrong, say so and propose a fix
    before coding.
-10. Do not run anything that costs money or touches AWS. Only write code/scripts.
+10. Azure mapping: EC2 = Azure VM, Security Group = NSG, CloudWatch = Azure Monitor,
+    IAM role = managed identity + role assignment, ECR = ACR, Auto Scaling Group =
+    VM Scale Set (Level 2 only). The plan's AWS references are replaced by these.
+11. Do not run anything that costs money or touches Azure. Only write code/scripts.
     I execute those.
 
 ## Structure

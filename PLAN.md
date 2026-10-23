@@ -46,24 +46,24 @@ Scale and measure again
 |---|---|
 | Sample product API | Python, FastAPI |
 | Packaging | Docker |
-| Cloud | AWS, initially one EC2 VM |
+| Cloud | Microsoft Azure, initially one Azure VM |
 | Load generation | Locust |
-| Cloud metrics | Amazon CloudWatch |
+| Cloud metrics | Azure Monitor |
 | Dataset processing | Pandas, NumPy |
 | ML model | XGBoost or scikit-learn HistGradientBoosting |
 | Model storage | Joblib |
 | Scaling controller | Python service |
 | Results | Pandas, Matplotlib, CSV reports |
 
-**Important distinction:** scaling Docker containers on one EC2 VM demonstrates application-level scaling, but it does not add more VM capacity. The advanced version will use an AWS Auto Scaling Group to launch and terminate EC2 instances.
+**Important distinction:** scaling Docker containers on one Azure VM demonstrates application-level scaling, but it does not add more VM capacity. The advanced version will use an Azure Virtual Machine Scale Set to launch and terminate VM instances.
 
 ---
 
 ## 2. Implementation phases
 
 1. **Build CloudShop API locally**: implement the endpoints, create test data, add a health check, and confirm that requests work.
-2. **Containerize and deploy**: build a Docker image, deploy it to an EC2 VM, and verify that the public endpoint works.
-3. **Set up monitoring**: collect application metrics and CloudWatch infrastructure metrics with timestamps.
+2. **Containerize and deploy**: build a Docker image, deploy it to an Azure VM, and verify that the public endpoint works.
+3. **Set up monitoring**: collect application metrics and Azure Monitor infrastructure metrics with timestamps.
 4. **Run Locust experiments**: generate controlled traffic patterns and save latency, throughput, error and active-user measurements.
 5. **Gather a second dataset**: download a public workload trace and process it into time-based workload records.
 6. **Create a unified training dataset**: standardize features, create future-demand targets and keep dataset source information for evaluation.
@@ -117,7 +117,7 @@ cd predictive-cloud-manager
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 
-pip install fastapi "uvicorn[standard]" pandas numpy scikit-learn xgboost joblib locust boto3 psutil prometheus-client
+pip install fastapi "uvicorn[standard]" pandas numpy scikit-learn xgboost joblib locust azure-identity azure-mgmt-compute azure-mgmt-monitor psutil prometheus-client
 pip freeze > requirements.txt
 ```
 
@@ -233,29 +233,55 @@ Check http://localhost:8000/health again. Once this works, the API is ready to d
 
 ---
 
-## Phase 2: Deploy the API to AWS
+## Phase 2: Deploy the API to Microsoft Azure
 
-### 6. Start with one EC2 instance
+The original AWS steps in this plan are replaced by their Azure equivalents:
+EC2 = Azure VM, Security Group = Network Security Group (NSG), CloudWatch =
+Azure Monitor, IAM role = managed identity + role assignment, ECR = Azure
+Container Registry (ACR), Auto Scaling Group = Virtual Machine Scale Set (Level
+2 only), and `ap-south-1` = Central India (`centralindia`).
 
-For the first version, use one EC2 VM running Docker. This keeps the project manageable and lets you gather real cloud measurements before attempting more complex infrastructure.
+### 6. Start with one Azure VM
 
-**Step 6.1: Launch the VM.** In AWS Console, select EC2, launch an Amazon Linux instance and choose a small instance type suitable for your budget and expected load. Use the region you plan to keep throughout the experiments, for example `ap-south-1`.
+For the first version, use one Azure VM running Docker. The detailed Portal
+steps are in `docs/DEPLOY_AZURE.md`.
 
-**Step 6.2: Configure network access.** Allow SSH (TCP 22) only from your own IP. For the initial demo, allow TCP 8000 only from your own IP if possible. Do not expose SSH to the whole internet. Later, place the API behind a load balancer and restrict direct access to application instances.
+Use **Ubuntu 24.04 LTS (x86_64)** in **Central India (`centralindia`)** and a
+size with at least **2 vCPUs**, such as **Standard_D2s_v3 (2 vCPU, 8 GiB)**.
+Avoid 1-vCPU sizes: containers share the VM's CPU, so extra replicas add
+contention rather than capacity. For budget-limited work, `Standard_B2s`
+(2 vCPU, 4 GiB) works, but its burstable CPU credits can distort long load
+tests. For 3-4 replicas later, use a 4-vCPU size such as `Standard_D4s_v3`.
 
-**Step 6.3: Install Docker.** Connect to the VM using SSH, install Docker using the current Amazon Linux instructions, and start the Docker service. Use the official EC2 getting-started documentation if your chosen AMI uses different commands.
+**Step 6.1: Launch the VM.** In the Azure Portal, create a resource group named
+`rg-predictive-cloud`, then create a VM with the Ubuntu image, the chosen size,
+SSH public-key authentication, username `azureuser`, and a Standard static
+public IP. Download the private key when prompted.
+
+**Step 6.2: Configure the NSG.** Allow SSH (TCP 22) and the API port (TCP 8000)
+only from your own public IP (`x.x.x.x/32`). Do not expose SSH to the whole
+internet. Later, place the API behind a load balancer and restrict direct
+access to the application VMs.
+
+**Step 6.3: Install Docker.** Connect as `azureuser`, install Docker Engine and
+the Compose plugin from Docker's official Ubuntu repository, add the user to the
+`docker` group, and reconnect before running Docker without sudo.
 
 ### 7. Transfer and start the API
 
 There are two practical deployment routes:
 
-- **Simplest:** transfer the project to EC2, build the image on the VM, and run it there.
-- **More reproducible:** build the image locally, push it to Amazon ECR, and pull it from EC2 using an attached IAM role.
+- **Simplest:** transfer the project to the Azure VM, build the image on the VM, and run it there.
+- **More reproducible:** build the image locally, push it to Azure Container Registry (ACR), and pull it from the VM using a managed identity.
 
-For the first route, from your Windows terminal you can copy the project to the VM:
+For the first route, from your Windows terminal you can copy the project files to the VM:
 
 ```powershell
-scp -i "C:\path\to\your-key.pem" -r . ec2-user@YOUR_EC2_PUBLIC_IP:~/cloudshop
+$AZURE_IP = "YOUR_AZURE_PUBLIC_IP"
+ssh -i "C:\path\to\your-key.pem" azureuser@$AZURE_IP "mkdir -p ~/cloudshop"
+scp -i "C:\path\to\your-key.pem" -r `
+  app requirements-api.txt Dockerfile .dockerignore `
+  azureuser@${AZURE_IP}:~/cloudshop/
 ```
 
 Then SSH into the instance and run:
@@ -268,18 +294,24 @@ docker run -d --restart unless-stopped \
   -p 8000:8000 cloudshop-api:1.0
 ```
 
-Replace `YOUR_EC2_PUBLIC_IP` with the actual public IP and use your real key path.
+Replace `YOUR_AZURE_PUBLIC_IP` with the actual public IP and use your real key
+path. The reusable `deploy/deploy.ps1` script automates the copy, build and
+container restart; see `docs/DEPLOY_AZURE.md`.
 
 Verify:
 
-- http://YOUR_EC2_PUBLIC_IP:8000/health
-- http://YOUR_EC2_PUBLIC_IP:8000/products
+- http://YOUR_AZURE_PUBLIC_IP:8000/health
+- http://YOUR_AZURE_PUBLIC_IP:8000/products
 
 The API is now deployed on the cloud. Do not yet connect an automatic controller that changes capacity.
 
 ### 8. Add cloud monitoring
 
-Enable or use Amazon CloudWatch for infrastructure metrics. Basic EC2 CPU utilization is available through CloudWatch; memory and disk metrics generally require the CloudWatch Agent or another monitoring agent. EC2 metric publication intervals and detailed-monitoring options are documented by AWS.
+Use Azure Monitor for infrastructure metrics. Platform metrics include VM
+Percentage CPU, disk and network activity. Guest OS memory and disk usage
+require the Azure Monitor Agent with a data collection rule, or a host metrics
+collector running on the VM. The API container itself should still be sampled by
+the application metrics collector.
 
 Collect these metrics:
 
@@ -289,14 +321,17 @@ Collect these metrics:
 | Active virtual users | Locust | Describes the test pattern |
 | p50, p95 and p99 latency | Locust | Measures user experience |
 | Failed request percentage | Locust | Detects service degradation |
-| CPU utilization | CloudWatch | Indicates compute pressure |
-| Memory utilization | CloudWatch Agent or host metrics | Detects memory pressure |
+| CPU utilization | Azure Monitor (Percentage CPU) | Indicates compute pressure |
+| Memory utilization | Azure Monitor Agent or host metrics | Detects memory pressure |
 | Container/replica count | Docker or controller logs | Records capacity changes |
-| Estimated resource cost | AWS billing/pricing data | Enables cost comparisons |
+| Estimated resource cost | Azure Cost Management | Enables cost comparisons |
 
 **Important:** Locust's active-user count is not the same as requests per second. A user may send several requests per minute, and latency can reduce the rate at which requests complete. Train on measured request rate rather than treating the configured user count as demand.
 
-Also note that CloudWatch's default EC2 metrics may be sampled less frequently than your load-test measurements. For short experiments, collect host/application metrics at a shorter interval and align them with CloudWatch data during preprocessing.
+Also note that Azure Monitor platform metrics are commonly sampled at
+one-minute granularity, which may be coarser than your load-test measurements.
+For short experiments, collect host/application metrics at a shorter interval
+and align them with Azure Monitor data during preprocessing.
 
 ---
 
@@ -364,7 +399,7 @@ Start the test:
 
 ```powershell
 locust -f loadtest/locustfile.py `
-  --host http://YOUR_EC2_PUBLIC_IP:8000 `
+  --host http://YOUR_AZURE_PUBLIC_IP:8000 `
   --csv results/cloudshop_run1 `
   --html results/cloudshop_run1.html
 ```
@@ -375,7 +410,7 @@ For headless execution, use:
 
 ```powershell
 locust -f loadtest/locustfile.py `
-  --host http://YOUR_EC2_PUBLIC_IP:8000 `
+  --host http://YOUR_AZURE_PUBLIC_IP:8000 `
   --headless `
   --csv results/cloudshop_run1 `
   --html results/cloudshop_run1.html
@@ -400,7 +435,7 @@ Use these values as initial test targets, not guaranteed safe limits. Actual ach
 For each run, save:
 
 - The Locust CSV files and HTML report.
-- A timestamped CloudWatch export or host-metrics log.
+- A timestamped Azure Monitor export or host-metrics log.
 - The test pattern, instance type and API version.
 - Any errors, restarts or scaling events.
 
@@ -750,7 +785,7 @@ You have two levels of implementation.
 
 **Level 1: Scale application replicas on one VM.** Run several API containers behind a reverse proxy or load balancer. Have the controller change the number of containers, while keeping the total within the host's CPU and memory limits. This is the recommended first implementation because it is cheaper and easier to debug.
 
-**Level 2: Scale actual cloud VMs.** Put the application instances behind an Application Load Balancer and place them in an EC2 Auto Scaling Group. The controller can update the group's desired capacity through the AWS SDK. AWS documents the launch-template, Auto Scaling Group and load-balancer setup in the EC2 Auto Scaling getting-started guide.
+**Level 2: Scale actual cloud VMs.** Put the application instances behind an Azure Load Balancer (or Application Gateway) and place them in a Virtual Machine Scale Set (VMSS). The controller can update the scale set's capacity through the Azure SDK, authenticating with a managed identity and a least-privilege role assignment. Azure documents the VMSS, load-balancer and autoscale configuration in its Virtual Machine Scale Sets documentation.
 
 For your project, build Level 1 first and make Level 2 an extension. This gives you a working ML forecasting and scaling demonstration without making the initial project depend on load balancer configuration, instance boot time and additional cloud costs.
 
@@ -852,21 +887,22 @@ Before deployment, set a spending budget and check the current pricing for the r
 Recommended precautions:
 
 - Begin with one small VM and a short load test.
-- Do not create an Application Load Balancer or multiple VMs until you need the advanced scaling stage.
+- Do not create an Azure Load Balancer or multiple VMs until you need the advanced scaling stage.
 - Configure a hard maximum for replica count and VM capacity.
-- Remember that a cloud budget alert may notify you rather than automatically stop spending.
-- Do not expose AWS credentials or access keys in your source code.
-- Use an attached IAM role with only the permissions the controller requires.
-- Stop or terminate resources after testing and check for leftover load balancers, storage volumes, snapshots and monitoring charges.
+- Remember that an Azure budget alert may notify you rather than automatically stop spending.
+- Do not expose Azure credentials, service principal secrets or access keys in your source code.
+- Use a system-assigned managed identity with only the permissions the controller requires.
+- Deallocate or delete resources after testing. Deallocating stops VM compute billing, but disks, public IPs and monitoring resources can still incur charges.
+- Check for leftover load balancers, disks, snapshots and Log Analytics or Azure Monitor costs.
 
-If you implement actual EC2 Auto Scaling, ensure the controller can only modify the intended Auto Scaling Group. Keep the minimum and maximum instance limits configured in AWS as an additional safeguard.
+If you implement a VM Scale Set, ensure the controller can only modify the intended scale set, ideally scoped to its resource group. Keep the minimum and maximum instance limits configured in Azure as an additional safeguard.
 
 ### 33. Suggested 6-week schedule
 
 | Week | Main work | Deliverable |
 |---|---|---|
 | 1 | Build and test the FastAPI app; Dockerize it | Working CloudShop API |
-| 2 | Deploy on EC2; configure metrics collection | Public API and initial cloud metrics |
+| 2 | Deploy on an Azure VM; configure metrics collection | Public API and initial cloud metrics |
 | 3 | Create Locust workloads; run experiments | Load-test reports and CloudShop dataset |
 | 4 | Gather public trace; preprocess both sources | Documented, time-aligned datasets |
 | 5 | Train and evaluate forecasting models | Saved model, evaluation results and plots |
@@ -878,7 +914,7 @@ This schedule assumes you can work on the project consistently and that cloud ac
 
 By the end, you should have:
 
-- [ ] A working CloudShop API deployed on AWS.
+- [ ] A working CloudShop API deployed on Microsoft Azure.
 - [ ] A Docker image and reproducible deployment instructions.
 - [ ] Locust load-test scripts and reports.
 - [ ] Timestamped real cloud and application metrics.

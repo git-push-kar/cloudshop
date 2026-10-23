@@ -1,26 +1,26 @@
 <#
 .SYNOPSIS
-Copies the CloudShop project to one EC2 instance, rebuilds the Docker image and
+Copies the CloudShop project to one Azure VM, rebuilds the Docker image and
 replaces the running container.
 
 .DESCRIPTION
 Run from the project root (or call the script by path). The script:
   1. Creates the remote project directory.
   2. Copies app/, requirements-api.txt, Dockerfile and .dockerignore with scp.
-  3. Builds the image on the instance.
+  3. Builds the image on the VM.
   4. Replaces the named container and checks /health.
 
-The EC2 instance must already have Docker installed and the security group must
-allow SSH and the API port from your current public IP.
+The Azure VM must already have Docker installed and its network security group
+(NSG) must allow SSH and the API port from your current public IP.
 
 .PARAMETER KeyPath
-Path to the EC2 private key (.pem).
+Path to the Azure VM private key (.pem).
 
-.PARAMETER EC2Host
-Public IPv4 address or public DNS name of the instance.
+.PARAMETER AzureHost
+Public IPv4 address or public DNS name of the Azure VM.
 
 .PARAMETER RemoteUser
-SSH user on Amazon Linux. Default: ec2-user.
+SSH user on the Ubuntu VM. Default: azureuser.
 
 .PARAMETER RemoteDir
 Project directory relative to the remote user's home. Default: cloudshop.
@@ -35,10 +35,10 @@ Container name to replace. Default: cloudshop.
 Host port published for the API. Default: 8000.
 
 .EXAMPLE
-.\deploy\deploy.ps1 -KeyPath "C:\keys\cloudshop-key.pem" -EC2Host "3.110.1.2"
+.\deploy\deploy.ps1 -KeyPath "C:\keys\cloudshop-azure-key.pem" -AzureHost "20.204.1.2"
 
 .EXAMPLE
-.\deploy\deploy.ps1 -KeyPath "C:\keys\cloudshop-key.pem" -EC2Host "ec2-3-110-1-2.ap-south-1.compute.amazonaws.com" -Port 8000
+.\deploy\deploy.ps1 -KeyPath "C:\keys\cloudshop-azure-key.pem" -AzureHost "cloudshop-yourname.centralindia.cloudapp.azure.com" -Port 8000
 #>
 
 [CmdletBinding()]
@@ -48,10 +48,10 @@ param(
 
     [Parameter(Mandatory = $true)]
     [ValidatePattern('^[A-Za-z0-9.-]+$')]
-    [string]$EC2Host,
+    [string]$AzureHost,
 
     [ValidatePattern('^[A-Za-z0-9._-]+$')]
-    [string]$RemoteUser = "ec2-user",
+    [string]$RemoteUser = "azureuser",
 
     [ValidatePattern('^[A-Za-z0-9._-]+$')]
     [string]$RemoteDir = "cloudshop",
@@ -96,18 +96,18 @@ foreach ($item in $items) {
 $sshArgs = @(
     "-i", $KeyPath,
     "-o", "ConnectTimeout=15",
-    "$RemoteUser@$EC2Host"
+    "$RemoteUser@$AzureHost"
 )
 $scpArgs = @(
     "-i", $KeyPath,
     "-o", "ConnectTimeout=15",
     "-r"
-) + $items + @("${RemoteUser}@${EC2Host}:${RemoteDir}/")
+) + $items + @("${RemoteUser}@${AzureHost}:${RemoteDir}/")
 
 Write-Host "Creating remote directory ~/$RemoteDir ..."
 & ssh @sshArgs "mkdir -p '$RemoteDir'"
 if ($LASTEXITCODE -ne 0) {
-    throw "Could not create the remote directory. Check SSH access and the key."
+    throw "Could not create the remote directory. Check SSH access, the key and the NSG rule."
 }
 
 Write-Host "Copying app, Dockerfile and API requirements ..."
@@ -135,7 +135,7 @@ if ($LASTEXITCODE -ne 0) {
     throw "Remote build or container restart failed. Check the SSH output above."
 }
 
-$healthUrl = "http://${EC2Host}:${Port}/health"
+$healthUrl = "http://${AzureHost}:${Port}/health"
 Write-Host "Checking $healthUrl ..."
 $healthy = $false
 for ($attempt = 1; $attempt -le 15; $attempt++) {
@@ -155,5 +155,5 @@ if ($healthy) {
     Write-Host "Deployment complete. Health check passed."
 }
 else {
-    Write-Warning "Container restarted, but the health check did not pass. Check the security group, container logs and status."
+    Write-Warning "Container restarted, but the health check did not pass. Check the NSG rules, container logs and status."
 }
